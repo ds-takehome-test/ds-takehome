@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.23 (TeX Live 2021/W32TeX) (preloaded format=pdflatex 2022.3.22)  22 MAR 2022 23:07
+This is pdfTeX, Version 3.141592653-2.6-1.40.23 (TeX Live 2021/W32TeX) (preloaded format=pdflatex 2022.3.23)  23 MAR 2022 14:43
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -553,28 +553,33 @@ LaTeX Font Info:    Trying to load font information for TS1+lmtt on input line 1
 File: ts1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <10> not available
-(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 191.
+(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 185.
 [1
 
 {c:/Users/willi/AppData/Roaming/TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 244.
+(Font)              <10> on input line 240.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 244.
+(Font)              <7> on input line 240.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 244.
-! Missing $ inserted.
-<inserted text> 
-                $
-l.251 blood_
-            pressure & 795 & 69.567 & 19.922 & 0 & 62 & 80 & 157\\ 
+(Font)              <5> on input line 240.
+[2pdfTeX warning (ext4): destination with the same identifier (name{table.1}) has been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.263 \end{Shaded}
+                  ]
+! Misplaced \noalign.
+\addlinespace ->\noalign 
+                         {\ifnum 0=`}\fi \@ifnextchar [{\@addspace }{\@addsp...
+l.284 \addlinespace
+                    
 Here is how much of TeX's memory you used:
- 12658 strings out of 480236
- 200871 string characters out of 5893968
- 493760 words of memory out of 5000000
+ 12660 strings out of 480236
+ 200884 string characters out of 5893968
+ 497760 words of memory out of 5000000
  30377 multiletter control sequences out of 15000+600000
  504228 words of font info for 68 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 60i,9n,63p,410b,348s stack positions out of 5000i,500n,10000p,200000b,80000s
+ 60i,9n,63p,410b,353s stack positions out of 5000i,500n,10000p,200000b,80000s
 
 !  ==> Fatal error occurred, no output PDF file produced!
