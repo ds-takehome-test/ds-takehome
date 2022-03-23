@@ -1,0 +1,6 @@
+Changes made to data: 
+
+1a. Delete duplicate rows
+1. Mean impute blood pressure to clean up bp = 0
+2. Keep only rows where age >= years_smoking
+3. zeta_disease as categorical not continuous

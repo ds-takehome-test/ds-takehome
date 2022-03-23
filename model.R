@@ -1,0 +1,531 @@
+library(tidyverse)
+library(h2o)
+library(vtable)
+library(scales)
+library(ggcorrplot)
+library(rpart)
+library(rpart.plot)
+
+training_dat <- read.csv('recruiting_zeta-disease_training-data_take-home-challenge - 2021_zeta-disease_training-data_take-home-challenge.csv')
+predict_these <- read.csv('recruiting_zeta-disease_prediction-data_take-home-challenge - 2021-01-21_zeta-disease_prediction-data_take-home-challenge.csv')
+
+#Check for duplicate rows.
+#Even though there is no person identifier in this data, I am going to assume that if 
+#data values are the same for each data field in two or more rows, then that is duplicate data
+#(meaning the same person has been included twice in the data). 
+#I think this is a fair assumption because it is highly improbable that two individuals would match 
+#across all of these features. 
+
+#How many rows will be dropped: 
+nrow(training_dat) - nrow(distinct(training_dat))
+
+#Check to make sure that a person hasn't been recorded twice with two different values for zeta_disease
+#If this matches return value of above line of code, then I'll know they haven't
+
+nrow(training_dat %>% select(-zeta_disease)) - nrow(distinct(training_dat %>% select(-zeta_disease)))
+
+#Drop the 5 duplicate rows:
+training_dat <- distinct(training_dat)
+
+#What proportion of training data is zeta positive? 
+mean(training_dat$zeta_disease)
+
+#Define function to count NA values in each column of some dataframe
+na_count <- function(df) sapply(df, function(c) sum(is.na(c)))
+
+#A return value of true here indicates that there is no missing data in training data
+all(na_count(training_dat) == 0)
+
+#A return value of true here indicates that there is no missing data in testing data
+all(na_count(predict_these) == 0)
+
+#Returns False so I will investigate further:
+na_count(predict_these)
+
+#In this case, I can see that the only "missing" data is zeta_disease, which makes sense because it hasn't been predicted yet
+
+
+#Summary statistics table to get a quick sense of data distributions and also sanity check 
+#for outliers in mins and maximums (negative weight or age for example would be an indicator of bad data)
+sumtable(training_dat)
+
+#Also want to see summary table of the testing data
+sumtable(predict_these)
+
+#A few things stick out in the summary table for the training data. 
+#There are 5 fields (ignoring zeta_disease) that have minimum values of 0. 
+#Two of these stick out to me, because I would think that there is something problematic about having a 0 value here:
+#bmi and blood_pressure
+
+#Let's investigate further
+
+
+#How often does 0 occur by data field? 
+
+#Define function to count 0's. 
+zero_count <- function(df) sapply(df, function(c) percent(mean(c == 0)))
+zero_count(training_dat)
+
+#I can see that 1% of the data has bmi = 0, and 4% of the data has blood_pressure = 0
+#(Not as important, but we should probably understand why only 14% of people in this dataset don't smoke. Is this a non-representative sample, or is something going on on mars
+#that makes people more inclined to take up smoking?)
+
+#At this point, I am going to make two assumptions moving forward with this project:
+
+#ASSUMPTION 1: A person's BMI cannot be 0. According to the data dictionary, bmi = weight/height. Since weight definitely can't be 0
+#(and a weight of 0 would have showed up in the data, assuming that it is the same instance of weight measured here as was used to calculate
+#bmi), bmi can't be 0.
+
+#ASSUMPTION 2: A person's blood_pressure CANNOT be 0. I believe this means that the heart has stopped. I'm assuming no dead people had data collected here
+
+#Assumptions 1 and 2 require me to take action to clean the data:
+
+#Some possible options for each field: 
+#1. Mean imputation
+#2. Group mean imputation
+#3. KNN imputation
+#4. Delete bad data
+
+#To keep things simple, I will use mean imputation and replace all 0 values for blood_pressure and bmi with the mean of all non-zero values for each
+non_zer_bp <- training_dat[training_dat$blood_pressure > 0,]
+avg_bp <- mean(non_zer_bp$blood_pressure)
+
+non_zer_bmi <- training_dat[training_dat$bmi > 0,]
+avg_bmi <- mean(non_zer_bmi$bmi)
+
+replacements_vals <- tibble(blood_pressure = avg_bp,
+                            bmi = avg_bmi)
+
+#This will be used in "production" environment to clean data before
+#creating predictions
+write.csv(replacements_vals, 'replacement_vals.csv',row.names =F)
+
+training_dat <- training_dat %>%
+  #Replace values of 0 with non-zero means
+  mutate(blood_pressure = ifelse(blood_pressure == 0, avg_bp, blood_pressure),
+         bmi = ifelse(bmi == 0, avg_bmi, bmi))
+
+
+
+#see that min blood_pressure and bmi are no longer 0
+min(training_dat$blood_pressure)
+min(training_dat$bmi)
+
+#One more sanity check: is years smoking ever greater than age? If it is, that's another indicator of bad data
+#In this case, I will use greater than/equal to in my logical statement rather than strict inequality,
+#therefore implying that it is not irrational for a person to have begun smoking
+#on mars at 0 years-old. I will not presume to understand mars culture.
+
+#A return value of false here indicates a logical contradiction in the data
+all(training_dat$age >= training_dat$years_smoking)
+
+#Returns false so I will investigate further:
+smoker_anomaly_training <- filter(training_dat, years_smoking > age)
+head(smoker_anomaly_training)
+
+#In this case, we can see that two individuals labeled as 19 years old have supposedly been smoking for longer than they've been alive
+#At this point, I have to clean up the data. I can do so by selecting from the four options listed above. 
+
+#This situation is a little different than the blood pressure and bmi situations, though, in that I am finding a contradiction in the data by comparing two
+#data fields to each other, rather than making a logical assumption about a single data field in isolation. The implication is that I don't know 
+#which of these two data fields is the incorrect one for these two observations, age or years_smoking. Therefore, a decision to replace bad data values by imputation would
+#be arbitrary: I have no way of saying that age must be replaced and years_smoking kept, or vice versa. Therefore, I will delete these rows of data entirely. 
+#Since this is only two rows of data that account for 0.25% of total observations in this dataset, it should be fairly inconsequential to remove them.
+
+#Delete contradictory data:
+training_dat <- filter(training_dat, age >= years_smoking)
+
+
+#Summary table after cleaning up data:
+sumtable(training_dat)
+
+
+#Now that I am done cleaning the training data, I am going to 
+#search for relationships in the data
+
+
+
+
+cors <- cor(training_dat)
+cors <- cors[,order(cors['zeta_disease',], decreasing = F)]
+cor_plot <- ggcorrplot(cors,
+                       # colors = c(min(cors), 0, max(cors[cors!=1])),
+                       type = 'lower',
+                       lab = T) +
+  scale_fill_gradient2(limit = c(min(cors),max(cors[cors!=1])), low = "blue", high =  "forestgreen", mid = "white", midpoint = 0) +
+  ggtitle('Training Data Correlations\n(Sorted desc on zeta_disease correlation)')
+
+print(cor_plot)
+
+#Based on correlations alone, weight immediately sticks out as potentially predictive. Cardio stress test seems like it will be
+#the least predictive
+
+
+#Another angle I'd like to see on the data is average of each candidate predictor based on whether or not the person is
+#zeta positive
+
+#This shows an average profile of a zeta positive individual compared to a non zeta positive individual
+
+zeta_means <- training_dat %>%
+  group_by(zeta_disease) %>%
+  summarise_all(mean) %>% 
+  left_join(training_dat %>% count(zeta_disease,name = 'Count')) %>%
+  arrange(desc(zeta_disease))
+
+
+#Chop off some decimal places
+rnd <- function(x) round(x,2)
+
+#mutate_all is a quick way to apply a function to every column in a dataframe
+zeta_means <- mutate_all(zeta_means, rnd)
+
+kable(zeta_means) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = FALSE)
+
+#Want to also see how various candidate predictors are distributed
+
+#Create function that takes dataframe and column name as input, and outputs density plot
+plot_dense <- function(dat, col) {
+  
+  ggplot(dat, aes_string(x = col)) + 
+    geom_density(lwd = .8, fill = 'blue',alpha = .2) +
+    ylab('Density') +
+    ggtitle(c) +
+    xlab(paste0(c, "\n\n\n"))
+  
+  
+}
+
+cols <- names(training_dat)[!names(training_dat) == 'zeta_disease']
+
+for(c in cols) {
+  
+  p <- plot_dense(training_dat, c)
+  print(p)
+}
+
+#Also interested in seeing each variable plotted against zeta_disease in a scatterplot
+#I will add a smoothing line to give some indicacator of the relationship between each
+#variable and zeta_disease. It's important to note that outliers can have a major impact
+#on the visual interpretation of the smoothing line, so a wider "shadow" around the line essentially 
+#indicates less trustworthiness in the shape of the line within that region of data.
+
+#Create scatterplot function
+plot_scatter <- function(dat1, dat2, col) {
+  # browser()
+  dat1 <- dat1 %>%
+    mutate(zeta_disease1 = as.numeric(zeta_disease)) 
+  
+  ggplot(dat1, aes_string(x = col, y = 'zeta_disease', color = 'zeta_disease')) +
+    stat_smooth(method="glm", color="black", se=T,
+                method.args = list(family=binomial)) +     geom_point() +
+    # geom_vline(data = dat2, aes_string(xintercept = col, color = 'zeta_disease'), lwd = 1) +
+    xlab(paste0(c, "\n\n\n")) +
+    ggtitle(c) +
+    scale_y_continuous(breaks = c(0,1)) +
+    theme(legend.position = 'none') +
+    ylab('Zeta Status')
+  
+  
+  
+}
+
+
+
+for(c in cols) {
+  
+  p <- plot_scatter(training_dat, zeta_means, c)
+  print(p)
+}
+
+#Tree------
+
+
+#Another thing I want to see to get a very simple idea of how these features influence the outcome and interact with
+#one another is a decision tree
+
+#Indicate in training data that zeta_disease is categorical
+training_dat <- mutate(training_dat, zeta_disease = as.factor(zeta_disease))
+
+#I am going to shorten the variable names just so the plot prints tidier
+tree_dat <- training_dat
+
+shorten <- function(x) substr(x, 1,5)
+names(tree_dat) <- sapply(names(tree_dat), shorten)
+
+simple_tree <- rpart(zeta_ ~ ., data = tree_dat,
+                     control = rpart.control(maxdepth = 4))
+
+#Forcing the tree to make only 4 splits at most indicates that weight, 
+#BMI, and age will likely be important in a final model predicting zeta_disease
+
+rpart.plot(simple_tree, cex = 1, extra = 2)
+
+
+#What I'm seeing in the tree corroborates some of what I was seeing in the correlation table and plot:
+#weight as the root node and the field with the highest importance measure is consistent with it having
+#the highest correlation with the target variable. cardio_stress_test seems to be inconsequential based on both
+#correlation with the target as well as importance in the tree
+
+
+#Model----
+
+#Now that I have cleaned the data and explored some of the relationships, I will 
+#build a few different classification models and select the one that is most successful
+
+
+#The first thing I'm going to do is drop cardio_stress_test from the training data because it seems to be unimportant based 
+#on the preliminary analysis
+
+training_dat <- select(training_dat, -cardio_stress_test)
+
+#I also want to add a few features to the data. I could have
+#added these in the data exploration step, but I wanted to avoid cluttering
+#the rmarkdown document too much
+
+# square <- function(x) x^2
+# 
+# feature_funs <- list(sqrt = sqrt, square = square)
+
+
+#mutate_at to target every variable that is not zeta_disease
+#training_dat <- mutate_at(training_dat, vars(!matches('zeta_disease')), feature_funs)
+
+
+#Actually, after creating features this way and running the models, I am seeing that they add nothing
+#To the accuracy of any of the models, so I will comment out the prior couple lines of code
+
+#Initialize h2o
+h2o.init(nthreads = -1)
+
+
+#Hide progrses bar because it looks bad in rendered document
+h2o.no_progress()
+
+
+#Convert target variable to categorical to avoid accidentally predicting continuous outcome:
+training_dat <- mutate(training_dat, zeta_disease = as.factor(zeta_disease))
+
+#Convert training data to h2o object:
+training_dat_h2o  <- as.h2o(training_dat)
+
+
+#this line looks pointless but I had deleted a few lines of code 
+#where previously it made sense to have this here. Now I'm keeping it to avoid
+#changing code below
+train_h2o <- training_dat_h2o
+
+
+#Want to run predictions on final test data as I go along
+testing_dat_h2o <- predict_these %>%
+  select(-zeta_disease) %>%
+  as.h2o()
+
+#character vector of candidate regressors:
+candidate_regressors <- names(training_dat)[names(training_dat) != 'zeta_disease']
+
+#target_variable
+target <- 'zeta_disease'
+
+#See all data types to make sure nothing accidentally ended up as categorical somehow (zeta_disease should show as factor here)
+sapply(training_dat, class)
+
+
+#For each model, I will use a grid search method to tune hyperparameters
+
+#First test GLM
+
+#It's probably overkill to use elastic net regression but 
+#if alpha = lamda = 0 is optimal, the grid search will indicate this
+hyper_params_glm <- list(
+  #Controls distribution between ridge and lasso componenets of penalty
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/alpha.html
+  alpha = seq(from = 0, to = 1, by = 0.001),
+  
+  #Amount of regularization (large value here means coefficients shrink closer to 0
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/lambda.html
+  lambda = c(.00001, .0001, .001, .01, .1, .5, 1)
+)
+
+#Number of models to be tested for in absence of RandomDiscrete strategy:
+sapply(hyper_params_glm, length) %>% prod()
+
+#Controls how grid search is run (will use same search_criteria for every model)
+search_criteria <- list(
+  #RandomDiscrete grid search samples from parameter space
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/grid-search.html
+  strategy = "RandomDiscrete",
+  max_runtime_secs = 30,
+  max_models = 200,
+  stopping_metric = "AUC", 
+  stopping_tolerance = 0.00001, 
+  stopping_rounds = 5, 
+  seed = 123
+)
+
+glm_models <- h2o.grid(algorithm = "glm",
+                       grid_id = "regression",
+                       x = candidate_regressors, 
+                       y = target, 
+                       training_frame = train_h2o,
+                       nfolds = 10, 
+                       family = "binomial", 
+                       hyper_params = hyper_params_glm, 
+                       search_criteria = search_criteria,
+                       seed = 123)
+
+#Since h2o.predict will use f1 under the hood to determine classification 
+#threshold, I will select the model with the highest cv f1 score
+glm_sorted <- h2o.getGrid(grid_id = "regression", sort_by = "f1", decreasing = TRUE)
+
+#Top model when sorted descending on f1
+glm_best <- h2o.getModel(glm_sorted@model_ids[[1]])
+
+
+#Useful stackoverflow thread discussing h2o.performance object:
+# https://stackoverflow.com/questions/43699454/how-to-understand-the-metrics-of-h2omodelmetrics-object-through-h2o-performance
+
+#xval = T below means I am pulling performance data based on cross validation
+#testing datasets, not training data. Will do this throughout
+glm_performance <- h2o.performance(glm_best, xval = T)
+glm_f1 <- h2o.F1(glm_performance) %>%
+  as.data.frame() %>%
+  arrange(desc(f1)) 
+
+#Store f1 value of best performing glm model
+glm_f1 <- glm_f1[1,2]
+
+#Appy predictions to test data. Will take a look at this later
+final_predictions_glm <- h2o.predict(glm_best, testing_dat_h2o) %>%
+  as.data.frame()
+h2o.varimp(glm_best)
+
+#Next try a random forest. This tree based model will be better if there are 
+#interactions among variables
+
+hyper_params_forest <- list(
+  #number of trees
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/ntrees.html
+  ntrees = 10000,  
+  
+  #how deep tree can go:
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/max_depth.html
+  max_depth = 12:25,
+  
+  #How much data must be in each bucket to make a split:
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/min_rows.html
+  min_rows = seq(1,101, 5),
+  
+  #Row sampling rate:
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/sample_rate.html
+  sample_rate = seq(.1, 1, by = .1),
+  
+  #Number of columns to sample at each node
+  #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/mtries.html
+  mtries = c(-1,1:7)
+)
+
+
+forest_models <- h2o.grid(algorithm = "randomForest", 
+                          grid_id = "forest", 
+                          x = candidate_regressors, 
+                          y = target, 
+                          training_frame = train_h2o, 
+                          nfolds = 10, 
+                          hyper_params = hyper_params_forest, 
+                          search_criteria = search_criteria, 
+                          seed = 123)
+
+forest_sorted <- h2o.getGrid(grid_id = "forest", sort_by = "f1", decreasing = TRUE)
+
+#Grab top performing model based on f1
+forest_best <- h2o.getModel(forest_sorted@model_ids[[1]])
+
+forest_perf <- h2o.performance(forest_best, xval = T)
+forest_f1 <- h2o.F1(forest_perf) %>%
+  as.data.frame() %>%
+  arrange(desc(f1)) 
+
+#grab f1 statistic
+forest_f1 <- forest_f1[1,2]
+
+#Apply predictions to test data
+final_predictions_forest <- h2o.predict(forest_best, testing_dat_h2o) %>%
+  as.data.frame()
+
+
+#Last I will try gradient boosting:
+hyper_params_gbm <- list(ntrees = 10000,  
+                         max_depth = 5:15, 
+                         min_rows = c(15, 20,30, 50,100),
+                         
+                         #GBM learn rate (how much to adjust predicted residuals based on new tree)
+                         #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/learn_rate.html
+                         learn_rate = c(0.001,0.01,0.1, .3, .5),  
+                         
+                         #Change in learn rate each round
+                         #https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/algo-params/learn_rate_annealing.html
+                         learn_rate_annealing = c(0.99,0.999,1),
+                         sample_rate = seq(.2, 1, by = 1),
+                         col_sample_rate = seq(.1, 1, by = 1)
+                         
+)
+
+
+models_gbm <- h2o.grid(algorithm = "gbm", grid_id = "gbm",
+                       x = candidate_regressors, 
+                       y = target,
+                       training_frame = train_h2o, 
+                       nfolds = 10, 
+                       hyper_params = hyper_params_gbm, 
+                       search_criteria = search_criteria, 
+                       seed = 123)
+
+gbm_sorted <- h2o.getGrid(grid_id = "gbm", sort_by = "f1", decreasing = TRUE)
+
+#Best gbm model based on f1 stat
+gbm_best <- h2o.getModel(gbm_sorted@model_ids[[1]])
+
+gbm_perf <- h2o.performance(gbm_best, xval = T)
+gbm_f1 <- h2o.F1(gbm_perf) %>%
+  as.data.frame() %>%
+  arrange(desc(f1)) 
+
+#grab best gbm f1 statistic
+gbm_f1 <- gbm_f1[1,2]
+
+#Final predictions.. will take a look later
+final_predictions_gbm <- h2o.predict(gbm_best, testing_dat_h2o) %>%
+  as.data.frame()
+
+models_perf_metric <- list(glm = glm_f1, rf = forest_f1, gbm = gbm_f1)
+#f1 score of each model:
+models_perf_metric
+
+#See how each model predicts on test data
+dat <- bind_cols(list(final_predictions_glm, final_predictions_forest, final_predictions_gbm)) %>%
+  select(contains('predict'))
+names(dat) <- c('glm','forest','gbm')
+head(dat, 20)
+
+#proportion of zeta positive predictions by model on test data:
+convert_fct_numeric <- function(x) mean(as.numeric(as.character(x)))
+sapply(dat, convert_fct_numeric)
+
+#Based on f1, random forest just barely squeaks out as the winner,
+#so I will go with that
+
+#Save model to be ingested by python 
+h2o.saveModel(forest_best, getwd(), filename = 'model', force = T)
+
+
+#Take a look at confusion matrix. By default,
+#this will be based on training data
+
+#Note that h2o switches 0 and 1 from their conventional positions 
+#(0/1 instead of 1/0)
+h2o.confusionMatrix(forest_best)
+
+#ROC Curve for GBM model based on cross validation 
+plot(h2o.performance(forest_best, xval = T) ,type='roc')
