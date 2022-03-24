@@ -1,10 +1,31 @@
+---
+title: "Pluralsight Model Building Take-Home"
+author: "William Rinauto"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r libraries, warning=F, message = F}
 library(tidyverse)
 library(h2o)
 library(vtable)
 library(scales)
 library(ggcorrplot)
+library(kableExtra)
 library(rpart)
 library(rpart.plot)
+
+```
+
+
+
+```{r dataLoad, warning=F, message = F, results='asis'}
+
+quick_kable <- function(x) {
+  kable(x) %>%
+    kable_styling(bootstrap_options = "bordered",
+                  full_width = FALSE)
+}
 
 training_dat <- read.csv('recruiting_zeta-disease_training-data_take-home-challenge - 2021_zeta-disease_training-data_take-home-challenge.csv')
 predict_these <- read.csv('recruiting_zeta-disease_prediction-data_take-home-challenge - 2021-01-21_zeta-disease_prediction-data_take-home-challenge.csv')
@@ -42,11 +63,15 @@ all(na_count(predict_these) == 0)
 #Returns False so I will investigate further:
 na_count(predict_these)
 
-#In this case, I can see that the only "missing" data is zeta_disease, which makes sense because it hasn't been predicted yet
+#In this case, I can see that the only "missing" data is zeta_disease, which makes sense because it hasn't been
+#predicted yet
 
 
 #Summary statistics table to get a quick sense of data distributions and also sanity check 
 #for outliers in mins and maximums (negative weight or age for example would be an indicator of bad data)
+
+
+
 sumtable(training_dat)
 
 #Also want to see summary table of the testing data
@@ -54,29 +79,30 @@ sumtable(predict_these)
 
 #A few things stick out in the summary table for the training data. 
 #There are 5 fields (ignoring zeta_disease) that have minimum values of 0. 
-#Two of these stick out to me, because I would think that there is something problematic about having a 0 value here:
-#bmi and blood_pressure
+#Two of these stick out to me, because I would think that there is something problematic about having a 0 value
+#here: bmi and blood_pressure
 
 #Let's investigate further
 
 
 #How often does 0 occur by data field? 
 
-#Define function to count 0's. 
+#Define function to count % of 0's by field
 zero_count <- function(df) sapply(df, function(c) percent(mean(c == 0)))
 zero_count(training_dat)
 
 #I can see that 1% of the data has bmi = 0, and 4% of the data has blood_pressure = 0
-#(Not as important, but we should probably understand why only 14% of people in this dataset don't smoke. Is this a non-representative sample, or is something going on on mars
-#that makes people more inclined to take up smoking?)
+#(Not as important, but we should probably understand why only 14% of people in this dataset don't smoke. Is this a 
+#non-representative sample, or is something going on on mars that makes people more inclined to take up smoking?)
 
 #At this point, I am going to make two assumptions moving forward with this project:
 
-#ASSUMPTION 1: A person's BMI cannot be 0. According to the data dictionary, bmi = weight/height. Since weight definitely can't be 0
-#(and a weight of 0 would have showed up in the data, assuming that it is the same instance of weight measured here as was used to calculate
-#bmi), bmi can't be 0.
+#ASSUMPTION 1: A person's BMI cannot be 0. According to the data dictionary, bmi = weight/height. Since weight
+#definitely can't be 0 (and a weight of 0 would have shown up in the data, assuming that it is the  
+#same instance of weight measured here as was used to calculate bmi), bmi can't be 0.
 
-#ASSUMPTION 2: A person's blood_pressure CANNOT be 0. I believe this means that the heart has stopped. I'm assuming no dead people had data collected here
+#ASSUMPTION 2: A person's blood_pressure CANNOT be 0. I believe this means that the heart has stopped. I'm 
+#assuming no dead people had data collected here
 
 #Assumptions 1 and 2 require me to take action to clean the data:
 
@@ -86,7 +112,8 @@ zero_count(training_dat)
 #3. KNN imputation
 #4. Delete bad data
 
-#To keep things simple, I will use mean imputation and replace all 0 values for blood_pressure and bmi with the mean of all non-zero values for each
+#To keep things simple, I will use mean imputation and replace all 0 values for blood_pressure and bmi with the 
+#mean of all non-zero values for each
 non_zer_bp <- training_dat[training_dat$blood_pressure > 0,]
 avg_bp <- mean(non_zer_bp$blood_pressure)
 
@@ -121,16 +148,20 @@ all(training_dat$age >= training_dat$years_smoking)
 
 #Returns false so I will investigate further:
 smoker_anomaly_training <- filter(training_dat, years_smoking > age)
-head(smoker_anomaly_training)
+head(smoker_anomaly_training) %>% quick_kable()
 
 #In this case, we can see that two individuals labeled as 19 years old have supposedly been smoking for longer than they've been alive
 #At this point, I have to clean up the data. I can do so by selecting from the four options listed above. 
 
-#This situation is a little different than the blood pressure and bmi situations, though, in that I am finding a contradiction in the data by comparing two
-#data fields to each other, rather than making a logical assumption about a single data field in isolation. The implication is that I don't know 
+#This situation is a little different than the blood pressure and bmi situations, though, in that I am 
+#finding a contradiction in the data by comparing two
+#data fields to each other, rather than making a logical assumption about a single data field in isolation.
+#The implication is that I don't know 
 #which of these two data fields is the incorrect one for these two observations, age or years_smoking. Therefore, a decision to replace bad data values by imputation would
-#be arbitrary: I have no way of saying that age must be replaced and years_smoking kept, or vice versa. Therefore, I will delete these rows of data entirely. 
-#Since this is only two rows of data that account for 0.25% of total observations in this dataset, it should be fairly inconsequential to remove them.
+#be arbitrary: I have no way of saying that age must be replaced and years_smoking kept, or vice versa. 
+#Therefore, I will delete these rows of data entirely. 
+#Since this is only two rows of data that account for 0.25% of total observations in this dataset, 
+#it should be fairly inconsequential to remove them.
 
 #Delete contradictory data:
 training_dat <- filter(training_dat, age >= years_smoking)
@@ -143,10 +174,10 @@ sumtable(training_dat)
 #Now that I am done cleaning the training data, I am going to 
 #search for relationships in the data
 
+cor_dat <- training_dat
+# names(cor_dat) <- knitr:::escape_latex(names(cor_dat))
 
-
-
-cors <- cor(training_dat)
+cors <- cor(cor_dat)
 cors <- cors[,order(cors['zeta_disease',], decreasing = F)]
 cor_plot <- ggcorrplot(cors,
                        # colors = c(min(cors), 0, max(cors[cors!=1])),
@@ -157,8 +188,8 @@ cor_plot <- ggcorrplot(cors,
 
 print(cor_plot)
 
-#Based on correlations alone, weight immediately sticks out as potentially predictive. Cardio stress test seems like it will be
-#the least predictive
+#Based on correlations alone, weight immediately sticks out as potentially predictive. Cardio stress test seems
+#like it will be the least predictive
 
 
 #Another angle I'd like to see on the data is average of each candidate predictor based on whether or not the person is
@@ -207,15 +238,10 @@ for(c in cols) {
 
 #Also interested in seeing each variable plotted against zeta_disease in a scatterplot
 #I will add a smoothing line to give some indicacator of the relationship between each
-#variable and zeta_disease. It's important to note that outliers can have a major impact
-#on the visual interpretation of the smoothing line, so a wider "shadow" around the line essentially 
-#indicates less trustworthiness in the shape of the line within that region of data.
+#variable and zeta_disease. 
 
 #Create scatterplot function
 plot_scatter <- function(dat1, dat2, col) {
-  # browser()
-  dat1 <- dat1 %>%
-    mutate(zeta_disease1 = as.numeric(zeta_disease)) 
   
   ggplot(dat1, aes_string(x = col, y = 'zeta_disease', color = 'zeta_disease')) +
     stat_smooth(method="glm", color="black", se=T,
@@ -268,7 +294,10 @@ rpart.plot(simple_tree, cex = 1, extra = 2)
 #the highest correlation with the target variable. cardio_stress_test seems to be inconsequential based on both
 #correlation with the target as well as importance in the tree
 
+```
 
+```{r models, warning=F, message = F, results='asis'}
+ 
 #Model----
 
 #Now that I have cleaned the data and explored some of the relationships, I will 
@@ -294,15 +323,13 @@ training_dat <- select(training_dat, -cardio_stress_test)
 
 
 #Actually, after creating features this way and running the models, I am seeing that they add nothing
-#To the accuracy of any of the models, so I will comment out the prior couple lines of code
+#to the accuracy of any of the models, so I will comment out the prior couple lines of code
 
 #Initialize h2o
 h2o.init(nthreads = -1)
 
-
 #Hide progrses bar because it looks bad in rendered document
 h2o.no_progress()
-
 
 #Convert target variable to categorical to avoid accidentally predicting continuous outcome:
 training_dat <- mutate(training_dat, zeta_disease = as.factor(zeta_disease))
@@ -328,7 +355,8 @@ candidate_regressors <- names(training_dat)[names(training_dat) != 'zeta_disease
 #target_variable
 target <- 'zeta_disease'
 
-#See all data types to make sure nothing accidentally ended up as categorical somehow (zeta_disease should show as factor here)
+#See all data types to make sure nothing accidentally ended up as categorical somehow
+#(zeta_disease should show as factor here)
 sapply(training_dat, class)
 
 
@@ -399,7 +427,9 @@ glm_f1 <- glm_f1[1,2]
 #Appy predictions to test data. Will take a look at this later
 final_predictions_glm <- h2o.predict(glm_best, testing_dat_h2o) %>%
   as.data.frame()
-h2o.varimp(glm_best)
+imp <- h2o.varimp(glm_best) %>%
+  as.data.frame() %>%
+  quick_kable()
 
 #Next try a random forest. This tree based model will be better if there are 
 #interactions among variables
@@ -507,11 +537,14 @@ models_perf_metric
 dat <- bind_cols(list(final_predictions_glm, final_predictions_forest, final_predictions_gbm)) %>%
   select(contains('predict'))
 names(dat) <- c('glm','forest','gbm')
-head(dat, 20)
+head(dat, 20) %>%
+  quick_kable()
 
 #proportion of zeta positive predictions by model on test data:
 convert_fct_numeric <- function(x) mean(as.numeric(as.character(x)))
-sapply(dat, convert_fct_numeric)
+lapply(dat, convert_fct_numeric) %>%
+  bind_rows() %>%
+  quick_kable()
 
 #Based on f1, random forest just barely squeaks out as the winner,
 #so I will go with that
@@ -525,7 +558,15 @@ h2o.saveModel(forest_best, getwd(), filename = 'model', force = T)
 
 #Note that h2o switches 0 and 1 from their conventional positions 
 #(0/1 instead of 1/0)
-h2o.confusionMatrix(forest_best)
+h2o.confusionMatrix(forest_best) %>%
+  as.data.frame() %>%
+  quick_kable()
 
 #ROC Curve for GBM model based on cross validation 
 plot(h2o.performance(forest_best, xval = T) ,type='roc')
+
+
+#Since random forest performed the best, that is what I will
+#use in my "production" python environment.
+
+```
